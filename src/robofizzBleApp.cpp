@@ -241,11 +241,9 @@ bool sweepWduration(uint16_t speed, int duration, long p1, long p2)
         sweepStartTime = seconds();
         onSweep = true;
     }
-
     if (duration > (seconds() - sweepStartTime))
     {
         sweep(stepSpeed, p1, p2);
-
         return false;
     }
     else
@@ -269,6 +267,10 @@ void setTargetPos(long p)
 
 bool commandSwitcher(uint8_t x)
 {
+    if (x != 7)
+    {
+        onSweep = false;
+    }
     switch (x)
     {
     case 1:
@@ -320,6 +322,10 @@ String cmdMode = "SERIAL";
 bool serialHandler(char c)
 {
     cmdMode = "SERIAL";
+    if (c != 'g')
+    {
+        onSweep = false;
+    }
     switch (c)
     {
     case 'w':
@@ -448,17 +454,20 @@ void bleUpdater(void *params)
     while (1)
     {
         position_r_ctsc->setValue(std::to_string(CurrentPosition));
-        vTaskDelay(100/portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
         speed_r_ctsc->setValue(std::to_string(stepSpeed));
-        vTaskDelay(100/portTICK_PERIOD_MS);
-        if(onSweep){
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        if (onSweep)
+        {
             duration_r_ctsc->setValue(std::to_string((seconds() - sweepStartTime)));
-        }else{
+        }
+        else
+        {
             duration_r_ctsc->setValue(std::to_string(0));
         }
-        vTaskDelay(100/portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
         exercise_r_ctsc->setValue((std::to_string(onSweep)));
-        vTaskDelay(100/portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
