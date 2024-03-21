@@ -3,7 +3,8 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <HX711_ADC.h>
+#include <Ultrasonic.h>
+#include "HX711.h"
 #if CONFIG_FREERTOS_UNICORE
 static const BaseType_t app_cpu = 0;
 #else
@@ -34,8 +35,8 @@ static const BaseType_t app_cpu = 1;
 #define pwmChannel 8
 #define pwmRes 8
 
-#define DOUT 21
-#define SCK 22
+#define DOUT 33
+#define SCK 32
 
 #define stepPin 2
 #define dirPin 18
@@ -45,7 +46,7 @@ static const BaseType_t app_cpu = 1;
 
 #define speedOffset_L 200
 #define speedOffset_H 5000
-#define speedRes 100
+#define speedRes 250
 
 static uint16_t stepSpeed = 0;
 static int8_t direction = 0;
@@ -63,7 +64,9 @@ static long lastPosition = 0;
 static int duration = 10; // seconds
 static int sweepStartTime = 0;
 static int sweepEndTime = 0;
+
 static int loadCellVal = 0;
+static int8_t loadVector = 1;
 
 bool sweepCheckerP1 = false;
 bool sweepCheckerP2 = false;
@@ -71,7 +74,7 @@ bool onSweep = false;
 
 static bool speedOnWrite = false;
 static bool posOnWrite = false;
-static bool testOnWrite = false;
+static bool cmdOnWrite = false;
 static bool durOnWrite = false;
 
 BLEServer *pServer = NULL;
@@ -90,7 +93,9 @@ BLECharacteristic *speed_r_ctsc = NULL;
 BLECharacteristic *duration_r_ctsc = NULL;
 BLECharacteristic *position_r_ctsc = NULL;
 
-HX711_ADC loadCell(DOUT, SCK);
+// HX711_ADC loadCell(DOUT, SCK);
+HX711 scale;
+// Ultrasonic ultrasonic(32,33);
 
 String stdToStr(std::string stdStr)
 {
@@ -107,12 +112,11 @@ std::string strToStd(String str)
     return std::string((str.c_str()));
 }
 
-int getLoadCellVal(int vector)
+int getLoadCellVal(int8_t vector,uint8_t average)
 {
-    if (loadCell.update())
-    {
-        loadCellVal = loadCell.getData() * vector;
-    }
+
+    // loadCellVal = loadCell.getData() * vector;
+    loadCellVal = scale.get_units(average)*vector;
     return loadCellVal;
 }
 
@@ -388,7 +392,7 @@ void updateFromBle()
 {
     if (speedOnWrite)
     {
-        stepperSetSpeed(stdToInt(speed_w_ctsc->getValue()));
+        stepperSetSpeed(stdToInt(speed_w_ctsc->getValue())/4);
         speedOnWrite = false;
     }
     if (posOnWrite)
@@ -401,10 +405,10 @@ void updateFromBle()
         duration = stdToInt(duration_w_ctsc->getValue());
         durOnWrite = false;
     }
-    if (testOnWrite)
+    if (cmdOnWrite)
     {
         tHandleX = stdToInt(cmd_w_ctsc->getValue());
-        testOnWrite = false;
+        cmdOnWrite = false;
     }
 }
 void taskHandler(void *params)
@@ -444,8 +448,10 @@ void readLoadCell(void *params)
 {
     while (1)
     {
-        loadcell_r_ctsc->setValue(std::to_string(getLoadCellVal(1)));
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+
+        loadcell_r_ctsc->setValue(std::to_string(getLoadCellVal(loadVector,1)));
+        loadcell_r_ctsc->notify(true);
+        vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 }
 
@@ -468,6 +474,7 @@ void bleUpdater(void *params)
         vTaskDelay(100 / portTICK_PERIOD_MS);
         exercise_r_ctsc->setValue((std::to_string(onSweep)));
         vTaskDelay(100 / portTICK_PERIOD_MS);
+
     }
 }
 
@@ -479,15 +486,15 @@ void eventReporter(void *params)
         posHandler();
         Serial.print("Position : ");
         Serial.print(CurrentPosition);
-        Serial.print("\t|| LoadCell : ");
-        Serial.print(getLoadCellVal(1));
-        Serial.print("\t|| Speed : ");
+        Serial.print("|| LoadCell : ");
+        Serial.print(loadCellVal);
+        Serial.print(" || Speed : ");
         Serial.print(stepSpeed);
-        Serial.print("\t|| Mode : ");
+        Serial.print(" || Mode : ");
         Serial.print(cmdMode);
-        Serial.print("\t|| Adv Name : ");
+        Serial.print(" || Adv Name : ");
         Serial.print(ADV_NAME);
-        Serial.print("\t|| Connected : ");
+        Serial.print(" || Connected : ");
         Serial.print(pServer->getConnectedCount());
         Serial.println();
     }
@@ -554,7 +561,8 @@ class CmdCtscCallBacksW : public BLECharacteristicCallbacks
 {
     void onWrite(BLECharacteristic *cmd_w_ctsc)
     {
-        testOnWrite = true;
+        cmdOnWrite = true;
+        Serial.println("YAZDIIIIIIII");
     }
     void onRead(BLECharacteristic *cmd_w_ctsc)
     {
@@ -571,7 +579,8 @@ class MyServerCallbacks : public BLEServerCallbacks
     void onDisconnect(BLEServer *pServer)
     {
         Serial.println("Disconnected.");
-        Serial.println("Re-Advertising.");
+        ESP.restart();
+        Serial.println("Re-Advertising.");        
         pServer->startAdvertising();
     }
 };
@@ -583,16 +592,25 @@ void setup()
 
     pinMode(dirPin, OUTPUT);
     pinMode(stepPin, OUTPUT);
-    stepperSetSpeed(1000);
+    stepperSetSpeed(250);
     ledcSetup(pwmChannel, stepSpeed, pwmRes);
     ledcWrite(pwmChannel, 127);
 
-    loadCell.begin();
-    loadCell.start(1000);
-    loadCell.setCalFactor(28);
+    // loadCell.begin();
+    // loadCell.start(1000);
+    // loadCell.setCalFactor(28);
+
+    scale.begin(DOUT, SCK);
+    delay(200);
+    scale.tare();
+    delay(200);
+
+    scale.set_scale(95);
 
     BLEDevice::init(ADV_NAME);
-
+    esp_err_t errRc = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
