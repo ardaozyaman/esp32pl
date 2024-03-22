@@ -3,7 +3,6 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <Ultrasonic.h>
 #include "HX711.h"
 #if CONFIG_FREERTOS_UNICORE
 static const BaseType_t app_cpu = 0;
@@ -93,9 +92,7 @@ BLECharacteristic *speed_r_ctsc = NULL;
 BLECharacteristic *duration_r_ctsc = NULL;
 BLECharacteristic *position_r_ctsc = NULL;
 
-// HX711_ADC loadCell(DOUT, SCK);
 HX711 scale;
-// Ultrasonic ultrasonic(32,33);
 
 String stdToStr(std::string stdStr)
 {
