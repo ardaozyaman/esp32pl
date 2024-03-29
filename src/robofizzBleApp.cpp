@@ -4,6 +4,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include "HX711.h"
+
 #if CONFIG_FREERTOS_UNICORE
 static const BaseType_t app_cpu = 0;
 #else
@@ -25,6 +26,7 @@ static const BaseType_t app_cpu = 1;
 #define POSITION_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a7"
 #define SPEED_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define DURATION_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define ACTIVE_SMP_DUR_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b0"
 
 #define BLE_PROPS_ALL BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
 #define BLE_PROPS_READ_NOTY BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
@@ -46,6 +48,12 @@ static const BaseType_t app_cpu = 1;
 #define speedOffset_L 200
 #define speedOffset_H 5000
 #define speedRes 250
+
+#if speedRes == 250
+#define speedDiv 4
+#elif speedRes == 1000
+#define speedDiv 1
+#endif
 
 static uint16_t stepSpeed = 0;
 static int8_t direction = 0;
@@ -91,6 +99,7 @@ BLECharacteristic *exercise_r_ctsc = NULL;
 BLECharacteristic *speed_r_ctsc = NULL;
 BLECharacteristic *duration_r_ctsc = NULL;
 BLECharacteristic *position_r_ctsc = NULL;
+BLECharacteristic *posChangeFlag_ctsc = NULL;
 
 HX711 scale;
 
@@ -109,11 +118,9 @@ std::string strToStd(String str)
     return std::string((str.c_str()));
 }
 
-int getLoadCellVal(int8_t vector,uint8_t average)
+int getLoadCellVal(int8_t vector, uint8_t average)
 {
-
-    // loadCellVal = loadCell.getData() * vector;
-    loadCellVal = scale.get_units(average)*vector;
+    loadCellVal = scale.get_units(average) * vector;
     return loadCellVal;
 }
 
@@ -165,7 +172,7 @@ void posHandler()
 void stepperSetSpeed(uint16_t speed)
 {
     stepperStop();
-    stepSpeed = speed;
+    stepSpeed = speed / speedDiv;
 }
 
 void savePos(uint8_t p)
@@ -221,17 +228,43 @@ static bool runToPosition(long p, uint16_t speed)
     }
 }
 
+boolean posChangeFlag = false;
+int activeExSampleTime = 0;
+
 void sweep(uint16_t speed, long p1, long p2)
 {
     if (!sweepCheckerP1)
     {
         sweepCheckerP1 = runToPosition(p1, speed);
-        sweepCheckerP1 ? sweepCheckerP2 = false : sweepCheckerP2 = true;
+        if (sweepCheckerP1)
+        {   
+            Serial.println(1);
+            posChangeFlag_ctsc->setValue(std::to_string(1));
+            posChangeFlag_ctsc->notify(true);
+            sweepCheckerP2 = false;
+        }
+        else
+        {            
+            sweepCheckerP2 = true;
+        }
+        // sweepCheckerP1 ? sweepCheckerP2 = false : sweepCheckerP2 = true;
     }
     else if (!sweepCheckerP2)
     {
         sweepCheckerP2 = runToPosition(p2, speed);
-        sweepCheckerP2 ? sweepCheckerP1 = false : sweepCheckerP1 = true;
+        if (sweepCheckerP2)
+        {
+            Serial.println(2);
+            posChangeFlag_ctsc->setValue(std::to_string(2));
+            posChangeFlag_ctsc->notify(true);
+            sweepCheckerP1 = false;
+        }
+        else
+        {
+           
+            sweepCheckerP1 = true;
+        }
+        // sweepCheckerP2 ? sweepCheckerP1 = false : sweepCheckerP1 = true;
     }
 }
 
@@ -271,6 +304,9 @@ bool commandSwitcher(uint8_t x)
     if (x != 7)
     {
         onSweep = false;
+        sweepCheckerP1 = false;
+        activeExSampleTime = 0;
+        posChangeFlag = false;
     }
     switch (x)
     {
@@ -389,7 +425,7 @@ void updateFromBle()
 {
     if (speedOnWrite)
     {
-        stepperSetSpeed(stdToInt(speed_w_ctsc->getValue())/4);
+        stepperSetSpeed(stdToInt(speed_w_ctsc->getValue()));
         speedOnWrite = false;
     }
     if (posOnWrite)
@@ -446,7 +482,7 @@ void readLoadCell(void *params)
     while (1)
     {
 
-        loadcell_r_ctsc->setValue(std::to_string(getLoadCellVal(loadVector,1)));
+        loadcell_r_ctsc->setValue(std::to_string(getLoadCellVal(loadVector, 1)));
         loadcell_r_ctsc->notify(true);
         vTaskDelay(50 / portTICK_PERIOD_MS);
     }
@@ -462,16 +498,15 @@ void bleUpdater(void *params)
         vTaskDelay(100 / portTICK_PERIOD_MS);
         if (onSweep)
         {
-            duration_r_ctsc->setValue(std::to_string((seconds() - sweepStartTime)));
+            // duration_r_ctsc->setValue(std::to_string((seconds() - sweepStartTime)));
         }
         else
         {
-            duration_r_ctsc->setValue(std::to_string(0));
+            // duration_r_ctsc->setValue(std::to_string(0));
         }
         vTaskDelay(100 / portTICK_PERIOD_MS);
-        exercise_r_ctsc->setValue((std::to_string(onSweep)));
+        // exercise_r_ctsc->setValue((std::to_string(onSweep)));
         vTaskDelay(100 / portTICK_PERIOD_MS);
-
     }
 }
 
@@ -487,12 +522,16 @@ void eventReporter(void *params)
         Serial.print(loadCellVal);
         Serial.print(" || Speed : ");
         Serial.print(stepSpeed);
+        Serial.print(" || Active_Smp : ");
+        Serial.print(activeExSampleTime);
         Serial.print(" || Mode : ");
         Serial.print(cmdMode);
         Serial.print(" || Adv Name : ");
         Serial.print(ADV_NAME);
         Serial.print(" || Connected : ");
         Serial.print(pServer->getConnectedCount());
+        Serial.print(" || cpu_Temp : ");
+        (int)temperatureRead() == (int)53.33 ? Serial.print("-") : Serial.print(temperatureRead());
         Serial.println();
     }
 }
@@ -559,7 +598,6 @@ class CmdCtscCallBacksW : public BLECharacteristicCallbacks
     void onWrite(BLECharacteristic *cmd_w_ctsc)
     {
         cmdOnWrite = true;
-        Serial.println("YAZDIIIIIIII");
     }
     void onRead(BLECharacteristic *cmd_w_ctsc)
     {
@@ -577,7 +615,7 @@ class MyServerCallbacks : public BLEServerCallbacks
     {
         Serial.println("Disconnected.");
         ESP.restart();
-        Serial.println("Re-Advertising.");        
+        Serial.println("Re-Advertising.");
         pServer->startAdvertising();
     }
 };
@@ -589,7 +627,7 @@ void setup()
 
     pinMode(dirPin, OUTPUT);
     pinMode(stepPin, OUTPUT);
-    stepperSetSpeed(250);
+    stepperSetSpeed(1000);
     ledcSetup(pwmChannel, stepSpeed, pwmRes);
     ledcWrite(pwmChannel, 127);
 
@@ -631,6 +669,7 @@ void setup()
     position_r_ctsc = read_service->createCharacteristic(POSITION_R_UUID, BLE_PROPS_READ_NOTY);
     speed_r_ctsc = read_service->createCharacteristic(SPEED_R_UUID, BLE_PROPS_READ_NOTY);
     duration_r_ctsc = read_service->createCharacteristic(DURATION_R_UUID, BLE_PROPS_READ_NOTY);
+    posChangeFlag_ctsc = read_service->createCharacteristic(ACTIVE_SMP_DUR_R_UUID, BLE_PROPS_READ_NOTY);
 
     write_service->start();
     read_service->start();
