@@ -673,7 +673,7 @@ void setup()
     scale.tare();
     delay(200);
 
-    scale.set_scale(95);
+    scale.set_scale(105);
 
     BLEDevice::init(ADV_NAME);
     esp_err_t errRc = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
