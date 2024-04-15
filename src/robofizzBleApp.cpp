@@ -18,6 +18,7 @@ static const BaseType_t app_cpu = 1;
 #define DURATION_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a2"
 #define POSITION_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a3"
 #define CMD_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a4"
+#define VIBRATE_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b1"
 
 #define SERVICE_R_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319142"
 
@@ -27,6 +28,7 @@ static const BaseType_t app_cpu = 1;
 #define SPEED_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define DURATION_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 #define ACTIVE_SMP_DUR_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b0"
+#define DIR_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b2"
 
 #define BLE_PROPS_ALL BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
 #define BLE_PROPS_READ_NOTY BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
@@ -83,6 +85,7 @@ static bool speedOnWrite = false;
 static bool posOnWrite = false;
 static bool cmdOnWrite = false;
 static bool durOnWrite = false;
+static bool vibOnWrite = false;
 
 BLEServer *pServer = NULL;
 
@@ -93,6 +96,7 @@ BLECharacteristic *speed_w_ctsc = NULL;
 BLECharacteristic *duration_w_ctsc = NULL;
 BLECharacteristic *position_w_ctsc = NULL;
 BLECharacteristic *cmd_w_ctsc = NULL;
+BLECharacteristic *vibration_w_ctsc = NULL;
 
 BLECharacteristic *loadcell_r_ctsc = NULL;
 BLECharacteristic *exercise_r_ctsc = NULL;
@@ -100,6 +104,7 @@ BLECharacteristic *speed_r_ctsc = NULL;
 BLECharacteristic *duration_r_ctsc = NULL;
 BLECharacteristic *position_r_ctsc = NULL;
 BLECharacteristic *posChangeFlag_ctsc = NULL;
+BLECharacteristic *direction_ctsc = NULL;
 
 HX711 scale;
 
@@ -228,6 +233,20 @@ static bool runToPosition(long p, uint16_t speed)
     }
 }
 
+void dirUpdate()
+{
+    if (direction == cw)
+    {
+        direction_ctsc->setValue("cww");
+        direction_ctsc->notify(true);
+    }
+    else
+    {
+        direction_ctsc->setValue("cw");
+        direction_ctsc->notify(true);
+    }
+}
+
 boolean posChangeFlag = false;
 int activeExSampleTime = 0;
 
@@ -237,14 +256,14 @@ void sweep(uint16_t speed, long p1, long p2)
     {
         sweepCheckerP1 = runToPosition(p1, speed);
         if (sweepCheckerP1)
-        {   
-            Serial.println(1);
+        {
+            dirUpdate();
             posChangeFlag_ctsc->setValue(std::to_string(1));
             posChangeFlag_ctsc->notify(true);
             sweepCheckerP2 = false;
         }
         else
-        {            
+        {
             sweepCheckerP2 = true;
         }
         // sweepCheckerP1 ? sweepCheckerP2 = false : sweepCheckerP2 = true;
@@ -253,15 +272,14 @@ void sweep(uint16_t speed, long p1, long p2)
     {
         sweepCheckerP2 = runToPosition(p2, speed);
         if (sweepCheckerP2)
-        {
-            Serial.println(2);
+        {   
+            dirUpdate();
             posChangeFlag_ctsc->setValue(std::to_string(2));
             posChangeFlag_ctsc->notify(true);
             sweepCheckerP1 = false;
         }
         else
         {
-           
             sweepCheckerP1 = true;
         }
         // sweepCheckerP2 ? sweepCheckerP1 = false : sweepCheckerP1 = true;
@@ -343,7 +361,7 @@ bool commandSwitcher(uint8_t x)
         return true;
         break;
     case 10:
-        return (TargetPosition, stepSpeed);
+        return runToPosition(TargetPosition, stepSpeed);
         break;
     case 11:
         sweep(stepSpeed, position1, position2);
@@ -442,6 +460,10 @@ void updateFromBle()
     {
         tHandleX = stdToInt(cmd_w_ctsc->getValue());
         cmdOnWrite = false;
+    }
+    if (vibOnWrite)
+    {
+        vibOnWrite = false;
     }
 }
 void taskHandler(void *params)
@@ -604,6 +626,17 @@ class CmdCtscCallBacksW : public BLECharacteristicCallbacks
     }
 };
 
+class VibCtscCallBacksW : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *vibration_w_ctsc)
+    {
+        vibOnWrite = true;
+    }
+    void onRead(BLECharacteristic *vibration_w_ctsc)
+    {
+    }
+};
+
 class MyServerCallbacks : public BLEServerCallbacks
 {
     void onConnect(BLEServer *pServer)
@@ -664,12 +697,16 @@ void setup()
     cmd_w_ctsc = write_service->createCharacteristic(CMD_W_UUID, BLE_PROPS_WRITE_NR);
     cmd_w_ctsc->setCallbacks(new CmdCtscCallBacksW());
 
+    vibration_w_ctsc = write_service->createCharacteristic(VIBRATE_W_UUID, BLE_PROPS_WRITE_NR);
+    vibration_w_ctsc->setCallbacks(new VibCtscCallBacksW());
+
     loadcell_r_ctsc = read_service->createCharacteristic(LOADCELL_R_UUID, BLE_PROPS_READ_NOTY);
     exercise_r_ctsc = read_service->createCharacteristic(EXERCISE_R_UUID, BLE_PROPS_READ_NOTY);
     position_r_ctsc = read_service->createCharacteristic(POSITION_R_UUID, BLE_PROPS_READ_NOTY);
     speed_r_ctsc = read_service->createCharacteristic(SPEED_R_UUID, BLE_PROPS_READ_NOTY);
     duration_r_ctsc = read_service->createCharacteristic(DURATION_R_UUID, BLE_PROPS_READ_NOTY);
     posChangeFlag_ctsc = read_service->createCharacteristic(ACTIVE_SMP_DUR_R_UUID, BLE_PROPS_READ_NOTY);
+    direction_ctsc = read_service->createCharacteristic(DIR_R_UUID, BLE_PROPS_READ_NOTY);
 
     write_service->start();
     read_service->start();
