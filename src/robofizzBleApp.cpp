@@ -49,7 +49,7 @@ static const BaseType_t app_cpu = 1;
 
 #define speedOffset_L 200
 #define speedOffset_H 5000
-#define speedRes 250
+#define speedRes 1000
 
 #if speedRes == 250
 #define speedDiv 4
@@ -67,10 +67,15 @@ static long stepEndTime = 0;
 static long position1 = 0;
 static long position2 = 0;
 static long TargetPosition = 0;
+static long CurrentVibratePosition = 0;
 static long CurrentPosition = 0;
 static long lastPosition = 0;
 
-static int duration = 10; // seconds
+static int vibrationRate = 40;
+static bool isVibDone = false;
+static bool isVibPosDone = true;
+
+static int duration = 20; // seconds
 static int sweepStartTime = 0;
 static int sweepEndTime = 0;
 
@@ -86,6 +91,7 @@ static bool posOnWrite = false;
 static bool cmdOnWrite = false;
 static bool durOnWrite = false;
 static bool vibOnWrite = false;
+
 
 BLEServer *pServer = NULL;
 
@@ -233,6 +239,73 @@ static bool runToPosition(long p, uint16_t speed)
     }
 }
 
+static bool runToPositionVibrate(long p, uint16_t speed)
+{
+    posHandler();
+    if (p > lastPosition)
+    {
+        
+        if (CurrentPosition >= p)
+        {
+            isVibDone = false;
+            isVibPosDone = true;
+            stepperStop();
+            return true;
+        }
+        else
+        {
+            if(isVibDone){
+                if(!isVibPosDone){
+                    CurrentVibratePosition = CurrentPosition;
+                    isVibPosDone = !isVibPosDone;
+               }
+               isVibDone = !runToPosition(CurrentVibratePosition-(vibrationRate/4),speed);
+            }else{
+               if(isVibPosDone){
+                    CurrentVibratePosition = CurrentPosition;
+                    isVibPosDone = !isVibPosDone;
+               }
+               isVibDone = runToPosition(CurrentVibratePosition+vibrationRate,speed);               
+            }
+            return false;
+        }
+    }
+    else if (p < lastPosition)
+    {
+        if (CurrentPosition <= p)
+        {
+            stepperStop();
+            return true;
+        }
+        else
+        {
+            if(isVibDone){
+                if(!isVibPosDone){
+                    CurrentVibratePosition = CurrentPosition;
+                    isVibPosDone = !isVibPosDone;
+               }
+               isVibDone = !runToPosition(CurrentVibratePosition+(vibrationRate/4),speed);
+            }else{
+                if(isVibPosDone){
+                    CurrentVibratePosition = CurrentPosition;
+                    isVibPosDone = !isVibPosDone;
+               }
+               isVibDone = runToPosition(CurrentVibratePosition-vibrationRate,speed);
+            }
+            return false;
+        }
+    }
+    else if (isStep)
+    {
+        stepperStop();
+        return false;
+    }
+    else
+    {
+        return true;
+    }
+}
+
 void dirUpdate()
 {
     if (direction == cw)
@@ -254,7 +327,8 @@ void sweep(uint16_t speed, long p1, long p2)
 {
     if (!sweepCheckerP1)
     {
-        sweepCheckerP1 = runToPosition(p1, speed);
+        //sweepCheckerP1 = runToPosition(p1, speed);
+        sweepCheckerP1 = runToPositionVibrate(p1,speed);
         if (sweepCheckerP1)
         {
             dirUpdate();
@@ -270,7 +344,9 @@ void sweep(uint16_t speed, long p1, long p2)
     }
     else if (!sweepCheckerP2)
     {
-        sweepCheckerP2 = runToPosition(p2, speed);
+        //sweepCheckerP2 = runToPosition(p2, speed);
+        sweepCheckerP2 = runToPositionVibrate(p2,speed);
+
         if (sweepCheckerP2)
         {   
             dirUpdate();
@@ -463,6 +539,10 @@ void updateFromBle()
     }
     if (vibOnWrite)
     {
+        int v = stdToInt(vibration_w_ctsc->getValue());
+        if(v>0&&v<400){
+            vibrationRate = v;
+        }
         vibOnWrite = false;
     }
 }
