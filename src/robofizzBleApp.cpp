@@ -19,6 +19,8 @@ static const BaseType_t app_cpu = 1;
 #define POSITION_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a3"
 #define CMD_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a4"
 #define VIBRATE_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b1"
+#define VIBRATE_RECOIL_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b3"
+#define IS_VIBRATE_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b4"
 
 #define SERVICE_R_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319142"
 
@@ -72,6 +74,9 @@ static long CurrentPosition = 0;
 static long lastPosition = 0;
 
 static int vibrationRate = 40;
+static int vibrationRecoilRate = 4;
+static bool isVibration = false;
+
 static bool isVibDone = false;
 static bool isVibPosDone = true;
 
@@ -91,7 +96,8 @@ static bool posOnWrite = false;
 static bool cmdOnWrite = false;
 static bool durOnWrite = false;
 static bool vibOnWrite = false;
-
+static bool vibRecOnWrite = false;
+static bool isVibOnWrite = false;
 
 BLEServer *pServer = NULL;
 
@@ -103,6 +109,8 @@ BLECharacteristic *duration_w_ctsc = NULL;
 BLECharacteristic *position_w_ctsc = NULL;
 BLECharacteristic *cmd_w_ctsc = NULL;
 BLECharacteristic *vibration_w_ctsc = NULL;
+BLECharacteristic *vibrationRecoil_w_ctsc = NULL;
+BLECharacteristic *isVibration_w_ctsc = NULL;
 
 BLECharacteristic *loadcell_r_ctsc = NULL;
 BLECharacteristic *exercise_r_ctsc = NULL;
@@ -244,7 +252,7 @@ static bool runToPositionVibrate(long p, uint16_t speed)
     posHandler();
     if (p > lastPosition)
     {
-        
+
         if (CurrentPosition >= p)
         {
             isVibDone = false;
@@ -254,18 +262,23 @@ static bool runToPositionVibrate(long p, uint16_t speed)
         }
         else
         {
-            if(isVibDone){
-                if(!isVibPosDone){
+            if (isVibDone)
+            {
+                if (!isVibPosDone)
+                {
                     CurrentVibratePosition = CurrentPosition;
                     isVibPosDone = !isVibPosDone;
-               }
-               isVibDone = !runToPosition(CurrentVibratePosition-(vibrationRate/4),speed);
-            }else{
-               if(isVibPosDone){
+                }
+                isVibDone = !runToPosition(CurrentVibratePosition - (vibrationRate / vibrationRecoilRate), speed);
+            }
+            else
+            {
+                if (isVibPosDone)
+                {
                     CurrentVibratePosition = CurrentPosition;
                     isVibPosDone = !isVibPosDone;
-               }
-               isVibDone = runToPosition(CurrentVibratePosition+vibrationRate,speed);               
+                }
+                isVibDone = runToPosition(CurrentVibratePosition + vibrationRate, speed);
             }
             return false;
         }
@@ -279,18 +292,23 @@ static bool runToPositionVibrate(long p, uint16_t speed)
         }
         else
         {
-            if(isVibDone){
-                if(!isVibPosDone){
+            if (isVibDone)
+            {
+                if (!isVibPosDone)
+                {
                     CurrentVibratePosition = CurrentPosition;
                     isVibPosDone = !isVibPosDone;
-               }
-               isVibDone = !runToPosition(CurrentVibratePosition+(vibrationRate/4),speed);
-            }else{
-                if(isVibPosDone){
+                }
+                isVibDone = !runToPosition(CurrentVibratePosition + (vibrationRate / vibrationRecoilRate), speed);
+            }
+            else
+            {
+                if (isVibPosDone)
+                {
                     CurrentVibratePosition = CurrentPosition;
                     isVibPosDone = !isVibPosDone;
-               }
-               isVibDone = runToPosition(CurrentVibratePosition-vibrationRate,speed);
+                }
+                isVibDone = runToPosition(CurrentVibratePosition - vibrationRate, speed);
             }
             return false;
         }
@@ -327,8 +345,7 @@ void sweep(uint16_t speed, long p1, long p2)
 {
     if (!sweepCheckerP1)
     {
-        //sweepCheckerP1 = runToPosition(p1, speed);
-        sweepCheckerP1 = runToPositionVibrate(p1,speed);
+        sweepCheckerP1 = runToPosition(p1, speed);
         if (sweepCheckerP1)
         {
             dirUpdate();
@@ -344,11 +361,10 @@ void sweep(uint16_t speed, long p1, long p2)
     }
     else if (!sweepCheckerP2)
     {
-        //sweepCheckerP2 = runToPosition(p2, speed);
-        sweepCheckerP2 = runToPositionVibrate(p2,speed);
+        sweepCheckerP2 = runToPosition(p2, speed);
 
         if (sweepCheckerP2)
-        {   
+        {
             dirUpdate();
             posChangeFlag_ctsc->setValue(std::to_string(2));
             posChangeFlag_ctsc->notify(true);
@@ -362,7 +378,42 @@ void sweep(uint16_t speed, long p1, long p2)
     }
 }
 
-bool sweepWduration(uint16_t speed, int duration, long p1, long p2)
+void sweepVibration(uint16_t speed, long p1, long p2)
+{
+    if (!sweepCheckerP1)
+    {
+        sweepCheckerP1 = runToPositionVibrate(p1, speed);
+        if (sweepCheckerP1)
+        {
+            dirUpdate();
+            posChangeFlag_ctsc->setValue(std::to_string(1));
+            posChangeFlag_ctsc->notify(true);
+            sweepCheckerP2 = false;
+        }
+        else
+        {
+            sweepCheckerP2 = true;
+        }
+    }
+    else if (!sweepCheckerP2)
+    {
+        sweepCheckerP2 = runToPositionVibrate(p2, speed);
+
+        if (sweepCheckerP2)
+        {
+            dirUpdate();
+            posChangeFlag_ctsc->setValue(std::to_string(2));
+            posChangeFlag_ctsc->notify(true);
+            sweepCheckerP1 = false;
+        }
+        else
+        {
+            sweepCheckerP1 = true;
+        }
+    }
+}
+
+bool sweepWduration(uint16_t speed, int duration, long p1, long p2, bool vibrate)
 {
     if (!onSweep)
     {
@@ -371,7 +422,14 @@ bool sweepWduration(uint16_t speed, int duration, long p1, long p2)
     }
     if (duration > (seconds() - sweepStartTime))
     {
-        sweep(stepSpeed, p1, p2);
+        if (vibrate)
+        {
+            sweepVibration(stepSpeed, p1, p2);
+        }
+        else
+        {
+            sweep(stepSpeed, p1, p2);
+        }
         return false;
     }
     else
@@ -426,7 +484,7 @@ bool commandSwitcher(uint8_t x)
         return true;
         break;
     case 7:
-        return sweepWduration(stepSpeed, duration, position1, position2);
+        return sweepWduration(stepSpeed, duration, position1, position2, isVibration);
         break;
     case 8:
         savePos(1);
@@ -481,7 +539,7 @@ bool serialHandler(char c)
         return true;
         break;
     case 'g':
-        return sweepWduration(stepSpeed, duration, position1, position2);
+        return sweepWduration(stepSpeed, duration, position1, position2, false);
         break;
     case '1':
         savePos(1);
@@ -540,10 +598,33 @@ void updateFromBle()
     if (vibOnWrite)
     {
         int v = stdToInt(vibration_w_ctsc->getValue());
-        if(v>0&&v<400){
+        if (v >= 10 && v <= 400)
+        {
             vibrationRate = v;
         }
         vibOnWrite = false;
+    }
+    if (vibRecOnWrite)
+    {
+        int v = stdToInt(vibrationRecoil_w_ctsc->getValue());
+        if (v >= 0 && v <= 6)
+        {
+            vibrationRecoilRate = v;
+        }
+        vibRecOnWrite = false;
+    }
+    if (isVibOnWrite)
+    {
+        int v = stdToInt(isVibration_w_ctsc->getValue());
+        if (v == 1)
+        {
+            isVibration = true;
+        }
+        else
+        {
+            isVibration = false;
+        }
+        isVibOnWrite = false;
     }
 }
 void taskHandler(void *params)
@@ -624,8 +705,8 @@ void eventReporter(void *params)
         Serial.print(loadCellVal);
         Serial.print(" || Speed : ");
         Serial.print(stepSpeed);
-        Serial.print(" || Active_Smp : ");
-        Serial.print(activeExSampleTime);
+        Serial.print(" || vibration : ");
+        Serial.print(isVibration);
         Serial.print(" || Mode : ");
         Serial.print(cmdMode);
         Serial.print(" || Adv Name : ");
@@ -717,6 +798,28 @@ class VibCtscCallBacksW : public BLECharacteristicCallbacks
     }
 };
 
+class VibRecCtscCallBacksW : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *vibrationRecoil_w_ctsc)
+    {
+        vibRecOnWrite = true;
+    }
+    void onRead(BLECharacteristic *vibrationRecoil_w_ctsc)
+    {
+    }
+};
+
+class IsVibCtscCallBacksW : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *isVibration_w_ctsc)
+    {
+        isVibOnWrite = true;
+    }
+    void onRead(BLECharacteristic *isVibration_w_ctsc)
+    {
+    }
+};
+
 class MyServerCallbacks : public BLEServerCallbacks
 {
     void onConnect(BLEServer *pServer)
@@ -779,6 +882,12 @@ void setup()
 
     vibration_w_ctsc = write_service->createCharacteristic(VIBRATE_W_UUID, BLE_PROPS_WRITE_NR);
     vibration_w_ctsc->setCallbacks(new VibCtscCallBacksW());
+
+    vibrationRecoil_w_ctsc = write_service->createCharacteristic(VIBRATE_RECOIL_W_UUID, BLE_PROPS_WRITE_NR);
+    vibrationRecoil_w_ctsc->setCallbacks(new VibRecCtscCallBacksW());
+
+    isVibration_w_ctsc = write_service->createCharacteristic(IS_VIBRATE_W_UUID, BLE_PROPS_WRITE_NR);
+    isVibration_w_ctsc->setCallbacks(new IsVibCtscCallBacksW());
 
     loadcell_r_ctsc = read_service->createCharacteristic(LOADCELL_R_UUID, BLE_PROPS_READ_NOTY);
     exercise_r_ctsc = read_service->createCharacteristic(EXERCISE_R_UUID, BLE_PROPS_READ_NOTY);
