@@ -328,7 +328,7 @@ void dirUpdate()
 {
     if (direction == cw)
     {
-        direction_ctsc->setValue("cww");
+        direction_ctsc->setValue("ccw");
         direction_ctsc->notify(true);
     }
     else
@@ -459,6 +459,8 @@ bool commandSwitcher(uint8_t x)
         sweepCheckerP1 = false;
         activeExSampleTime = 0;
         posChangeFlag = false;
+        isVibDone = false;
+        isVibPosDone = true;
     }
     switch (x)
     {
@@ -514,6 +516,11 @@ bool serialHandler(char c)
     if (c != 'g')
     {
         onSweep = false;
+        sweepCheckerP1 = false;
+        activeExSampleTime = 0;
+        posChangeFlag = false;
+        isVibDone = false;
+        isVibPosDone = true;
     }
     switch (c)
     {
@@ -838,6 +845,7 @@ class MyServerCallbacks : public BLEServerCallbacks
 
 void setup()
 {
+
     Serial.begin(115200);
     Serial.println("Esp runing.");
 
