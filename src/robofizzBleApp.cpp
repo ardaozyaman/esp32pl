@@ -357,7 +357,6 @@ void sweep(uint16_t speed, long p1, long p2)
         {
             sweepCheckerP2 = true;
         }
-        // sweepCheckerP1 ? sweepCheckerP2 = false : sweepCheckerP2 = true;
     }
     else if (!sweepCheckerP2)
     {
@@ -374,7 +373,6 @@ void sweep(uint16_t speed, long p1, long p2)
         {
             sweepCheckerP1 = true;
         }
-        // sweepCheckerP2 ? sweepCheckerP1 = false : sweepCheckerP1 = true;
     }
 }
 
