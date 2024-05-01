@@ -5,6 +5,39 @@
 #include <BLE2902.h>
 #include "HX711.h"
 
+/**
+ * @brief Kurulum öncesi ayar,
+ * AKTİVASYON KODU AYARI
+ *
+ * ACTIVATION_KEY => esp yi aktif etmek için şifre. const string olarak belirleyin.
+ * örn: "Arda+R-OBofizz"
+ */
+#define ACTIVATION_KEY "key"
+
+/**
+ * @brief Kurulum öncesi ayar,
+ * SURUCU AYARI
+ *
+ * surucu => Büyük sürücü için 1, Küçük için 0 giriniz.
+ */
+#define surucu 1
+
+/**
+ * Kurulum ayarlarını yapılandırır,
+ * Kurulum öncesi ayarlara göre tanımlama yapar,
+ * ne yaptığınızı bilmiyorsanız buraya dokunmayın.
+ */
+#if surucu == 1
+#define speedRes 1000
+#elif
+#define speedRes 250
+#endif
+#if speedRes == 250
+#define speedDiv 4
+#elif speedRes == 1000
+#define speedDiv 1
+#endif
+
 #if CONFIG_FREERTOS_UNICORE
 static const BaseType_t app_cpu = 0;
 #else
@@ -32,6 +65,12 @@ static const BaseType_t app_cpu = 1;
 #define ACTIVE_SMP_DUR_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b0"
 #define DIR_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b2"
 
+#define SERVICE_KEY_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319143"
+#define ACTIVATION_KEY_W_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b5"
+#define ACTIVATION_KEY_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b6"
+
+
+
 #define BLE_PROPS_ALL BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
 #define BLE_PROPS_READ_NOTY BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
 #define BLE_PROPS_WRITE_NR BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
@@ -51,13 +90,6 @@ static const BaseType_t app_cpu = 1;
 
 #define speedOffset_L 200
 #define speedOffset_H 5000
-#define speedRes 1000
-
-#if speedRes == 250
-#define speedDiv 4
-#elif speedRes == 1000
-#define speedDiv 1
-#endif
 
 static uint16_t stepSpeed = 0;
 static int8_t direction = 0;
@@ -99,10 +131,19 @@ static bool vibOnWrite = false;
 static bool vibRecOnWrite = false;
 static bool isVibOnWrite = false;
 
+static bool isActivated = false;
+
 BLEServer *pServer = NULL;
 
 BLEService *write_service = NULL;
 BLEService *read_service = NULL;
+BLEService *key_service = NULL;
+
+/// @brief key servisi
+BLECharacteristic *activatioKey_r_ctsc = NULL;
+BLECharacteristic *activatioKey_w_ctsc = NULL;
+
+
 
 BLECharacteristic *speed_w_ctsc = NULL;
 BLECharacteristic *duration_w_ctsc = NULL;
@@ -119,6 +160,7 @@ BLECharacteristic *duration_r_ctsc = NULL;
 BLECharacteristic *position_r_ctsc = NULL;
 BLECharacteristic *posChangeFlag_ctsc = NULL;
 BLECharacteristic *direction_ctsc = NULL;
+
 
 HX711 scale;
 
@@ -841,11 +883,28 @@ class MyServerCallbacks : public BLEServerCallbacks
     }
 };
 
+void printBrand(char c1,const char* s,char c2){
+    Serial.println();
+    for(int i  = 0; i<=50;i++){
+        i==25 ? Serial.print(s) : i <25 ? Serial.print(c1) : Serial.print(c2);
+    }
+
+    Serial.println();
+
+}
+
 void setup()
 {
-
     Serial.begin(115200);
-    Serial.println("Esp runing.");
+    
+    printBrand('<',"| RoboFizz |",'>');
+
+    Serial.println();
+    Serial.print("Esp => ");
+    Serial.print(getCpuFrequencyMhz());
+    Serial.println(" Mhz ile çalişiyor.");
+
+    printBrand('>',"| RoboFizz |",'<');
 
     pinMode(dirPin, OUTPUT);
     pinMode(stepPin, OUTPUT);
@@ -868,11 +927,13 @@ void setup()
     esp_err_t errRc = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
     esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
     esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
+
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
     write_service = pServer->createService(SERVICE_W_UUID);
     read_service = pServer->createService(SERVICE_R_UUID);
+    key_service = pServer->createService(SERVICE_KEY_UUID);
 
     speed_w_ctsc = write_service->createCharacteristic(SPEED_W_UUID, BLE_PROPS_WRITE_NR);
     speed_w_ctsc->setCallbacks(new SpeedCtscCallBacksW());
@@ -895,6 +956,8 @@ void setup()
     isVibration_w_ctsc = write_service->createCharacteristic(IS_VIBRATE_W_UUID, BLE_PROPS_WRITE_NR);
     isVibration_w_ctsc->setCallbacks(new IsVibCtscCallBacksW());
 
+
+
     loadcell_r_ctsc = read_service->createCharacteristic(LOADCELL_R_UUID, BLE_PROPS_READ_NOTY);
     exercise_r_ctsc = read_service->createCharacteristic(EXERCISE_R_UUID, BLE_PROPS_READ_NOTY);
     position_r_ctsc = read_service->createCharacteristic(POSITION_R_UUID, BLE_PROPS_READ_NOTY);
@@ -903,10 +966,35 @@ void setup()
     posChangeFlag_ctsc = read_service->createCharacteristic(ACTIVE_SMP_DUR_R_UUID, BLE_PROPS_READ_NOTY);
     direction_ctsc = read_service->createCharacteristic(DIR_R_UUID, BLE_PROPS_READ_NOTY);
 
+
+    activatioKey_w_ctsc = key_service->createCharacteristic(ACTIVATION_KEY_W_UUID, BLE_PROPS_WRITE_NR);
+    activatioKey_r_ctsc = key_service->createCharacteristic(ACTIVATION_KEY_R_UUID, BLE_PROPS_READ_NOTY);
+
+
     write_service->start();
     read_service->start();
+    key_service->start();
 
     pServer->startAdvertising();
+
+    
+    printBrand('<',"|Key bekleniyor|",'>');
+
+    while (!isActivated)
+    {   
+        
+                
+        if (ACTIVATION_KEY == activatioKey_w_ctsc->getValue())
+        {
+            isActivated = true;
+        }
+    }
+
+    printBrand('>',"|Key SUCCESS|",'<');
+
+
+    activatioKey_r_ctsc->setValue("SUCCESS");
+
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
 
