@@ -135,6 +135,8 @@ static bool isActivated = false;
 
 BLEServer *pServer = NULL;
 
+BLEAdvertising *pAdvertising = NULL;
+
 BLEService *write_service = NULL;
 BLEService *read_service = NULL;
 BLEService *key_service = NULL;
@@ -895,14 +897,16 @@ void printBrand(char c1,const char* s,char c2){
 
 void setup()
 {
-    Serial.begin(115200);
-    
+    setCpuFrequencyMhz(80);
+    Serial.begin(115200);    
     printBrand('<',"| RoboFizz |",'>');
-
     Serial.println();
     Serial.print("Esp => ");
     Serial.print(getCpuFrequencyMhz());
     Serial.println(" Mhz ile çalişiyor.");
+    Serial.print("Xtal => ");
+    Serial.print(getXtalFrequencyMhz());
+    Serial.println(" Mhz");
 
     printBrand('>',"| RoboFizz |",'<');
 
@@ -924,12 +928,19 @@ void setup()
     scale.set_scale(105);
 
     BLEDevice::init(ADV_NAME);
+
     esp_err_t errRc = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
     esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
     esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
 
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
+
+    pAdvertising = pServer->getAdvertising();
+
+    pAdvertising->addServiceUUID(SERVICE_R_UUID);
+    pAdvertising->addServiceUUID(SERVICE_W_UUID);
+    pAdvertising->addServiceUUID(SERVICE_KEY_UUID);
 
     write_service = pServer->createService(SERVICE_W_UUID);
     read_service = pServer->createService(SERVICE_R_UUID);
@@ -975,15 +986,12 @@ void setup()
     read_service->start();
     key_service->start();
 
-    pServer->startAdvertising();
+    pServer->startAdvertising();    
 
-    
     printBrand('<',"|Key bekleniyor|",'>');
 
     while (!isActivated)
     {   
-        
-                
         if (ACTIVATION_KEY == activatioKey_w_ctsc->getValue())
         {
             isActivated = true;
@@ -991,12 +999,12 @@ void setup()
     }
 
     printBrand('>',"|Key SUCCESS|",'<');
-
+    
 
     activatioKey_r_ctsc->setValue("SUCCESS");
 
+    vTaskDelay(500 / portTICK_PERIOD_MS);
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
 
     xTaskCreatePinnedToCore(
         taskHandler,
