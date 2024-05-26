@@ -566,12 +566,6 @@ bool commandSwitcher(uint8_t x)
         sweep(stepSpeed, position1, position2);
         return false;
         break;
-    case 12:
-        return runToPosition(position1, stepSpeed);
-        break;
-    case 13:
-        return runToPosition(position2, stepSpeed);
-        break;
     default:
         stepperStop();
         return false;
@@ -924,6 +918,15 @@ void printBrand(char c1, const char *s, char c2)
     Serial.println();
 }
 
+volatile int stateChanged = 0;
+volatile bool states = false;
+
+void IRAM_ATTR handleInterrupt()
+{
+    states = true;
+    stateChanged++;
+}
+
 void setup()
 {
     setCpuFrequencyMhz(80);
@@ -1038,6 +1041,8 @@ void setup()
 
     vTaskDelay(500 / portTICK_PERIOD_MS);
 
+    attachInterrupt(digitalPinToInterrupt(dirPin), handleInterrupt, CHANGE);
+
     xTaskCreatePinnedToCore(
         taskHandler,
         "Task Handler",
@@ -1073,8 +1078,23 @@ void setup()
         1,
         NULL,
         app_cpu);
-}
 
+}
+int crt = 0;
+bool looped = true;
 void loop()
 {
+    if(states){
+        if(stateChanged <= 1){
+            states = false;
+        }
+        if(millis()-crt > 5000){
+            Serial.println(stateChanged/5);
+            Serial.println("HZ-----------------");
+            stateChanged = 0 ;
+            states = false;
+        }
+    }else{
+        crt = millis();
+    }
 }
