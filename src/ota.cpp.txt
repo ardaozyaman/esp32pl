@@ -1,0 +1,99 @@
+#include <Arduino.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <Update.h>
+
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319142"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a5"
+
+BLEServer *pServer = NULL;
+BLECharacteristic *pCharacteristic = NULL;
+bool deviceConnected = false;
+bool isUpdating = false;
+size_t totalSize = 0;
+size_t receivedSize = 0;
+
+class MyCallbacks : public BLEServerCallbacks
+{
+    void onConnect(BLEServer *pServer)
+    {
+        deviceConnected = true;
+    };
+
+    void onDisconnect(BLEServer *pServer)
+    {
+        deviceConnected = false;
+    }
+};
+
+class OTACharacteristicCallbacks : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *pCharacteristic)
+    {
+        std::string value = pCharacteristic->getValue();
+        if (value.length() > 0)
+        {
+            if (!isUpdating)
+            {
+                isUpdating = true;
+                totalSize = 1120735;
+                if (Update.begin(totalSize))
+                { // start with max available size
+                    Serial.println("OTA update started");
+                }
+            }
+            if (isUpdating)
+            {
+                Update.write((uint8_t *)value.c_str(),value.length());
+                receivedSize += value.length();
+                Serial.printf("Received %d of %d bytes\n", receivedSize, totalSize);
+            }
+
+            if (receivedSize >= totalSize)
+            {
+                if (Update.end(true))
+                {
+                    Serial.println("OTA update finished!");
+                    ESP.restart();
+                }
+                else
+                {
+                    Serial.printf("OTA update failed. Error: %s\n", Update.errorString());
+                }
+                isUpdating = false;
+                receivedSize = 0;
+                totalSize = 0;
+            }
+        }
+    }
+};
+
+void setup()
+{
+    Serial.begin(115200);
+
+    BLEDevice::init("ESP32_DEVICE_NAME");
+    pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new MyCallbacks());
+
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    pCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_WRITE);
+    pCharacteristic->setCallbacks(new OTACharacteristicCallbacks());
+
+    pService->start();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06); // functions that help with iPhone connections issue
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+    Serial.println("Waiting a client connection to notify...");
+}
+
+void loop()
+{
+    // Do nothing here
+}

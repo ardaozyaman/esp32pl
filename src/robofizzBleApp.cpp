@@ -38,7 +38,7 @@
  *
  * surucu => Büyük sürücü için 1, Küçük için 0 giriniz.
  */
-#define surucu 1
+#define surucu 0
 
 /**
  * Kurulum ayarlarını yapılandırır,
@@ -47,7 +47,7 @@
  */
 #if surucu == 1
 #define speedRes 1000
-#elif
+#elif surucu == 0
 #define speedRes 250
 #endif
 #if speedRes == 250
@@ -76,7 +76,7 @@ static const BaseType_t app_cpu = 1;
 #define SERVICE_R_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319142"
 
 #define LOADCELL_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a5"
-#define EXERCISE_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a6"
+#define TARGET_POS_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a6"
 #define POSITION_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a7"
 #define SPEED_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define DURATION_R_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
@@ -178,7 +178,7 @@ BLECharacteristic *vibrationRecoil_w_ctsc = NULL;
 BLECharacteristic *isVibration_w_ctsc = NULL;
 
 BLECharacteristic *loadcell_r_ctsc = NULL;
-BLECharacteristic *exercise_r_ctsc = NULL;
+BLECharacteristic *targetPos_r_ctsc = NULL;
 BLECharacteristic *speed_r_ctsc = NULL;
 BLECharacteristic *duration_r_ctsc = NULL;
 BLECharacteristic *position_r_ctsc = NULL;
@@ -281,6 +281,8 @@ static bool runToPosition(long p, uint16_t speed)
         if (CurrentPosition >= p)
         {
             stepperStop();
+            // targetPos_r_ctsc->setValue("1");
+            // targetPos_r_ctsc->notify();
             return true;
         }
         else
@@ -294,6 +296,8 @@ static bool runToPosition(long p, uint16_t speed)
         if (CurrentPosition <= p)
         {
             stepperStop();
+            // targetPos_r_ctsc->setValue("1");
+            // targetPos_r_ctsc->notify();
             return true;
         }
         else
@@ -308,6 +312,8 @@ static bool runToPosition(long p, uint16_t speed)
     }
     else
     {
+        // targetPos_r_ctsc->setValue("1");
+        // targetPos_r_ctsc->notify();
         return true;
     }
 }
@@ -566,12 +572,12 @@ bool commandSwitcher(uint8_t x)
         sweep(stepSpeed, position1, position2);
         return false;
         break;
-    case 12:
+    /*case 12:
         return runToPosition(position1, stepSpeed);
         break;
     case 13:
         return runToPosition(position2, stepSpeed);
-        break;
+        break;*/
     default:
         stepperStop();
         return false;
@@ -674,7 +680,7 @@ void updateFromBle()
     if (vibOnWrite)
     {
         int v = stdToInt(vibration_w_ctsc->getValue());
-        if (v >= 10 && v <= 400)
+        if (v >= 40 && v <= 400)
         {
             vibrationRate = v;
         }
@@ -683,7 +689,7 @@ void updateFromBle()
     if (vibRecOnWrite)
     {
         int v = stdToInt(vibrationRecoil_w_ctsc->getValue());
-        if (v >= 0 && v <= 6)
+        if (v >= 1 && v <= 6)
         {
             vibrationRecoilRate = v;
         }
@@ -764,7 +770,7 @@ void bleUpdater(void *params)
             // duration_r_ctsc->setValue(std::to_string(0));
         }
         vTaskDelay(100 / portTICK_PERIOD_MS);
-        // exercise_r_ctsc->setValue((std::to_string(onSweep)));
+        // targetPos_r_ctsc->setValue((std::to_string(onSweep)));
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
@@ -841,14 +847,14 @@ class SpeedCtscCallBacksW : public BLECharacteristicCallbacks
 class ExerciseCtscCallBacksW : public BLECharacteristicCallbacks
 {
 
-    void onWrite(BLECharacteristic *exercise_r_ctsc)
+    void onWrite(BLECharacteristic *targetPos_r_ctsc)
     {
-        Serial.println("yazıldı exercise_r_ctsc");
+        Serial.println("yazıldı targetPos_r_ctsc");
     }
 
-    void onRead(BLECharacteristic *exercise_r_ctsc)
+    void onRead(BLECharacteristic *targetPos_r_ctsc)
     {
-        Serial.println("okundu exercise_r_ctsc");
+        Serial.println("okundu targetPos_r_ctsc");
     }
 };
 
@@ -999,7 +1005,7 @@ void setup()
     isVibration_w_ctsc->setCallbacks(new IsVibCtscCallBacksW());
 
     loadcell_r_ctsc = read_service->createCharacteristic(LOADCELL_R_UUID, BLE_PROPS_READ_NOTY);
-    exercise_r_ctsc = read_service->createCharacteristic(EXERCISE_R_UUID, BLE_PROPS_READ_NOTY);
+    targetPos_r_ctsc = read_service->createCharacteristic(TARGET_POS_R_UUID, BLE_PROPS_READ_NOTY);
     position_r_ctsc = read_service->createCharacteristic(POSITION_R_UUID, BLE_PROPS_READ_NOTY);
     speed_r_ctsc = read_service->createCharacteristic(SPEED_R_UUID, BLE_PROPS_READ_NOTY);
     duration_r_ctsc = read_service->createCharacteristic(DURATION_R_UUID, BLE_PROPS_READ_NOTY);
@@ -1025,7 +1031,8 @@ void setup()
     printBrand('<', "|Key bekleniyor|", '>');
 
     while (!isActivated)
-    {
+    {   
+        
         if (ACTIVATION_KEY == activatioKey_w_ctsc->getValue())
         {
             isActivated = true;
