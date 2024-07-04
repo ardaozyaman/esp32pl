@@ -3,7 +3,10 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <Update.h>
 #include "HX711.h"
+
+#define FIRMWARE_VERSION "1.1"
 
 /**
  * @brief Kurulum öncesi ayar,
@@ -38,7 +41,7 @@
  *
  * surucu => Büyük sürücü için 1, Küçük için 0 giriniz.
  */
-#define surucu 0
+#define surucu 1
 
 /**
  * Kurulum ayarlarını yapılandırır,
@@ -90,6 +93,10 @@ static const BaseType_t app_cpu = 1;
 #define SERVICE_SPECS_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319144"
 #define DEVICE_ID_UUID "beb5483e-36e1-4688-b7f5-ea07361b26c0"
 #define DEVICE_MODEL_UUID "beb5483e-36e1-4688-b7f5-ea07361b26c1"
+
+#define SERVICE_OTA_UUID "4fafc201-1fb5-459e-8fcc-c5c9c3319145"
+#define UPDATE_CHANNEL_UUID "beb5483e-36e1-4688-b7f5-ea07361b26d0"
+#define FIRMWARE_VERSION_UUID "beb5483e-36e1-4688-b7f5-ea07361b26d1"
 
 #define BLE_PROPS_ALL BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
 #define BLE_PROPS_READ_NOTY BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
@@ -150,8 +157,12 @@ static bool durOnWrite = false;
 static bool vibOnWrite = false;
 static bool vibRecOnWrite = false;
 static bool isVibOnWrite = false;
-
 static bool isActivated = false;
+
+bool deviceConnected = false;
+bool isUpdating = false;
+size_t totalSize = 0;
+size_t receivedSize = 0;
 
 BLEServer *pServer = NULL;
 
@@ -161,6 +172,10 @@ BLEService *write_service = NULL;
 BLEService *read_service = NULL;
 BLEService *key_service = NULL;
 BLEService *dev_service = NULL;
+BLEService *OTA_service = NULL;
+
+BLECharacteristic *update_channel_ctsc = NULL;
+BLECharacteristic *firmware_version_ctsc = NULL;
 
 /// @brief key servisi
 BLECharacteristic *activatioKey_r_ctsc = NULL;
@@ -186,6 +201,19 @@ BLECharacteristic *posChangeFlag_ctsc = NULL;
 BLECharacteristic *direction_ctsc = NULL;
 
 HX711 scale;
+
+
+void printBrand(char c1, const char *s, char c2)
+{
+    Serial.println();
+    for (int i = 0; i <= 50; i++)
+    {
+        i == 25 ? Serial.print(s) : i < 25 ? Serial.print(c1)
+                                           : Serial.print(c2);
+    }
+
+    Serial.println();
+}
 
 String stdToStr(std::string stdStr)
 {
@@ -520,6 +548,16 @@ void setTargetPos(long p)
     TargetPosition = p;
 }
 
+bool calibrate(){
+    stepperStop();
+    printBrand('<',"TARE",'>');
+    scale.tare(2);
+    printBrand('>',"TARE DONE",'<');
+    cmd_w_ctsc->setValue("t");
+    cmd_w_ctsc->notify(true);
+    return true;
+}
+
 bool commandSwitcher(uint8_t x)
 {
     if (x != 7)
@@ -572,12 +610,15 @@ bool commandSwitcher(uint8_t x)
         sweep(stepSpeed, position1, position2);
         return false;
         break;
-    /*case 12:
+    case 12:
         return runToPosition(position1, stepSpeed);
         break;
     case 13:
         return runToPosition(position2, stepSpeed);
-        break;*/
+        break;
+    case 14:
+        return calibrate();
+        break;    
     default:
         stepperStop();
         return false;
@@ -769,9 +810,9 @@ void bleUpdater(void *params)
         {
             // duration_r_ctsc->setValue(std::to_string(0));
         }
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        //vTaskDelay(100 / portTICK_PERIOD_MS);
         // targetPos_r_ctsc->setValue((std::to_string(onSweep)));
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        //vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
@@ -781,23 +822,26 @@ void eventReporter(void *params)
     {
         vTaskDelay(200 / portTICK_PERIOD_MS);
         posHandler();
-        Serial.print("Position : ");
-        Serial.print(CurrentPosition);
-        Serial.print("|| LoadCell : ");
-        Serial.print(loadCellVal);
-        Serial.print(" || Speed : ");
-        Serial.print(stepSpeed);
-        Serial.print(" || vibration : ");
-        Serial.print(isVibration);
-        Serial.print(" || Mode : ");
-        Serial.print(cmdMode);
-        Serial.print(" || Adv Name : ");
-        Serial.print(ADV_NAME);
-        Serial.print(" || Connected : ");
-        Serial.print(pServer->getConnectedCount());
-        Serial.print(" || cpu_Temp : ");
-        (int)temperatureRead() == (int)53.33 ? Serial.print("-") : Serial.print(temperatureRead());
-        Serial.println();
+        if (!isUpdating)
+        {
+            Serial.print("Position : ");
+            Serial.print(CurrentPosition);
+            Serial.print("|| LoadCell : ");
+            Serial.print(loadCellVal);
+            Serial.print(" || Speed : ");
+            Serial.print(stepSpeed);
+            Serial.print(" || vibration : ");
+            Serial.print(isVibration);
+            Serial.print(" || Mode : ");
+            Serial.print(cmdMode);
+            Serial.print(" || Adv Name : ");
+            Serial.print(ADV_NAME);
+            Serial.print(" || Connected : ");
+            Serial.print(pServer->getConnectedCount());
+            Serial.print(" || cpu_Temp : ");
+            (int)temperatureRead() == (int)53.33 ? Serial.print("-") : Serial.print(temperatureRead());
+            Serial.println();
+        }
     }
 }
 
@@ -906,11 +950,13 @@ class MyServerCallbacks : public BLEServerCallbacks
 {
     void onConnect(BLEServer *pServer)
     {
+        deviceConnected = true;
         Serial.println("Connected.");
     };
 
     void onDisconnect(BLEServer *pServer)
     {
+        deviceConnected = false;
         Serial.println("Disconnected.");
         ESP.restart();
         Serial.println("Re-Advertising.");
@@ -918,17 +964,58 @@ class MyServerCallbacks : public BLEServerCallbacks
     }
 };
 
-void printBrand(char c1, const char *s, char c2)
+class OTACharacteristicCallbacks : public BLECharacteristicCallbacks
 {
-    Serial.println();
-    for (int i = 0; i <= 50; i++)
-    {
-        i == 25 ? Serial.print(s) : i < 25 ? Serial.print(c1)
-                                           : Serial.print(c2);
-    }
+    bool isFirstValue = true;
 
-    Serial.println();
-}
+    void onWrite(BLECharacteristic *pCharacteristic)
+    {
+        std::string value = pCharacteristic->getValue();
+        if (isFirstValue)
+        {
+            cmd_w_ctsc->setValue("x");
+            stepperStop();
+            totalSize = stdToInt(value);
+            isFirstValue = false;
+        }
+        else if (value.length() > 0)
+        {
+            if (!isUpdating)
+            {
+                isUpdating = true;
+                if (Update.begin(totalSize))
+                { // start with max available size
+                    Serial.println("OTA update started");
+                }
+            }
+            if (isUpdating)
+            {
+                Update.write((uint8_t *)value.c_str(), value.length());
+                receivedSize += value.length();
+                Serial.printf("Received %d of %d bytes\n", receivedSize, totalSize);
+            }
+
+            if (receivedSize >= totalSize)
+            {
+                if (Update.end(true))
+                {
+                    Serial.println("OTA update finished!");
+                    ESP.restart();
+                }
+                else
+                {
+                    Serial.printf("OTA update failed. Error: %s\n", Update.errorString());
+                    ESP.restart();
+                }
+                isUpdating = false;
+                receivedSize = 0;
+                totalSize = 0;
+            }
+        }
+    }
+};
+
+
 
 void setup()
 {
@@ -942,7 +1029,8 @@ void setup()
     Serial.print("Xtal => ");
     Serial.print(getXtalFrequencyMhz());
     Serial.println(" Mhz");
-
+    printBrand('<', "FIRMWARE VERSION", '>');
+    printBrand('>', FIRMWARE_VERSION, '<');
     printBrand('>', "| RoboFizz |", '<');
 
     pinMode(dirPin, OUTPUT);
@@ -982,6 +1070,14 @@ void setup()
     read_service = pServer->createService(SERVICE_R_UUID);
     key_service = pServer->createService(SERVICE_KEY_UUID);
     dev_service = pServer->createService(SERVICE_SPECS_UUID);
+    OTA_service = pServer->createService(SERVICE_OTA_UUID);
+
+    ///@brief update
+    update_channel_ctsc = OTA_service->createCharacteristic(UPDATE_CHANNEL_UUID, BLE_PROPS_WRITE_NR);
+    ///@brief update
+    update_channel_ctsc->setCallbacks(new OTACharacteristicCallbacks);
+    ///@brief update
+    firmware_version_ctsc = OTA_service->createCharacteristic(FIRMWARE_VERSION_UUID, BLE_PROPS_READ_NOTY);
 
     speed_w_ctsc = write_service->createCharacteristic(SPEED_W_UUID, BLE_PROPS_WRITE_NR);
     speed_w_ctsc->setCallbacks(new SpeedCtscCallBacksW());
@@ -992,7 +1088,7 @@ void setup()
     position_w_ctsc = write_service->createCharacteristic(POSITION_W_UUID, BLE_PROPS_WRITE_NR);
     position_w_ctsc->setCallbacks(new PosCtscCallBacksW());
 
-    cmd_w_ctsc = write_service->createCharacteristic(CMD_W_UUID, BLE_PROPS_WRITE_NR);
+    cmd_w_ctsc = write_service->createCharacteristic(CMD_W_UUID, BLE_PROPS_ALL);
     cmd_w_ctsc->setCallbacks(new CmdCtscCallBacksW());
 
     vibration_w_ctsc = write_service->createCharacteristic(VIBRATE_W_UUID, BLE_PROPS_WRITE_NR);
@@ -1022,17 +1118,20 @@ void setup()
     read_service->start();
     key_service->start();
     dev_service->start();
+    OTA_service->start();
 
     dev_id_ctsc->setValue(ID);
     dev_model_ctsc->setValue(MODEL);
+
+    firmware_version_ctsc->setValue(FIRMWARE_VERSION);
 
     pServer->startAdvertising();
 
     printBrand('<', "|Key bekleniyor|", '>');
 
     while (!isActivated)
-    {   
-        
+    {
+
         if (ACTIVATION_KEY == activatioKey_w_ctsc->getValue())
         {
             isActivated = true;
